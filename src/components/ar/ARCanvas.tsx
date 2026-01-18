@@ -2,7 +2,7 @@
 import { Suspense, useState, useRef, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, Environment, Html, useProgress, ContactShadows, Line, useTexture, Grid } from '@react-three/drei';
-import { Camera, Sun, RotateCw, Moon, RefreshCcw, Ruler, Play, Pause, HelpCircle, Layers, X, MousePointer2, SplitSquareHorizontal, Video, Square, Scan, Palette, Gamepad2, Save, List, Trash2, Aperture, SlidersHorizontal, Mic, MicOff, CloudRain, Snowflake, Image as ImageIcon, Clock, Feather, Upload, Film, Box, Zap, ArrowUp, ArrowDown, Eye, EyeOff, Flashlight, Hand, Key, Cctv, Glasses, Anchor, Flame } from 'lucide-react';
+import { Camera, Sun, RotateCw, Moon, RefreshCcw, Ruler, Play, Pause, HelpCircle, Layers, X, MousePointer2, SplitSquareHorizontal, Video, Square, Scan, Palette, Gamepad2, Save, List, Trash2, Aperture, SlidersHorizontal, Mic, MicOff, CloudRain, Snowflake, Image as ImageIcon, Clock, Feather, Upload, Film, Box, Zap, ArrowUp, ArrowDown, Eye, EyeOff, Flashlight, Hand, Key, Cctv, Glasses, Anchor, Flame, Rocket, Plane } from 'lucide-react';
 import * as THREE from 'three';
 import { Physics, useBox, usePlane, useSphere } from '@react-three/cannon';
 import { useStore } from '@/lib/store';
@@ -723,7 +723,7 @@ function Minimap({ playerPosRef }: { playerPosRef: React.MutableRefObject<THREE.
   );
 }
 
-function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCount, isThirdPerson, onLand, playerPosRef, teleportPos, onTeleportComplete, isGrappling }: { moveRef: React.MutableRefObject<{x:number, y:number}>, controlsRef: any, isRunning: boolean, isCrouching: boolean, jumpCount: number, isThirdPerson: boolean, onLand: (pos: THREE.Vector3) => void, playerPosRef: React.MutableRefObject<THREE.Vector3>, teleportPos?: THREE.Vector3 | null, onTeleportComplete?: () => void, isGrappling: boolean }) {
+function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCount, isThirdPerson, onLand, playerPosRef, teleportPos, onTeleportComplete, isGrappling, isJetpacking, jetpackFuel, isDroneMode }: { moveRef: React.MutableRefObject<{x:number, y:number}>, controlsRef: any, isRunning: boolean, isCrouching: boolean, jumpCount: number, isThirdPerson: boolean, onLand: (pos: THREE.Vector3) => void, playerPosRef: React.MutableRefObject<THREE.Vector3>, teleportPos?: THREE.Vector3 | null, onTeleportComplete?: () => void, isGrappling: boolean, isJetpacking: boolean, jetpackFuel: number, isDroneMode: boolean }) {
   const { camera, scene } = useThree();
   
   const playCollisionSound = useMemo(() => {
@@ -814,6 +814,19 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
   useFrame(() => {
     if (!ref.current) return;
 
+    // Sync Camera to Physics Body
+    const currentPos = new THREE.Vector3(...pos.current);
+    const deltaPos = currentPos.clone().sub(prevPos.current);
+    
+    if (deltaPos.lengthSq() > 0.000001) {
+      camera.position.add(deltaPos);
+      if (controlsRef.current) {
+        controlsRef.current.target.add(deltaPos);
+      }
+      prevPos.current.copy(currentPos);
+    }
+    playerPosRef.current.copy(currentPos);
+
     // Grappling Hook Logic
     if (isGrappling) {
       if (!grapplePoint) {
@@ -838,23 +851,29 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
       setGrapplePoint(null);
     }
 
-    const { x, y } = moveRef.current;
-    const speed = isCrouching ? 2 : (isRunning ? 8 : 4);
+    // Drone Mode Logic
+    if (isDroneMode) {
+      const { x, y } = moveRef.current;
+      const speed = isRunning ? 12 : 6;
 
-    // Sync Camera to Physics Body
-    const currentPos = new THREE.Vector3(...pos.current);
-    const deltaPos = currentPos.clone().sub(prevPos.current);
-    
-    if (deltaPos.lengthSq() > 0.000001) {
-      camera.position.add(deltaPos);
-      if (controlsRef.current) {
-        controlsRef.current.target.add(deltaPos);
+      camera.getWorldDirection(forward);
+      forward.normalize();
+      right.crossVectors(forward, camera.up).normalize();
+
+      moveVector.set(0, 0, 0);
+      if (x !== 0 || y !== 0) {
+        moveVector.addScaledVector(right, x);
+        moveVector.addScaledVector(forward, -y);
+        moveVector.normalize().multiplyScalar(speed);
       }
-      prevPos.current.copy(currentPos);
+      // Apply velocity directly (hover / fly)
+      api.velocity.set(moveVector.x, moveVector.y, moveVector.z);
+      return;
     }
 
-    // Update shared ref for minimap
-    playerPosRef.current.copy(currentPos);
+    const { x, y } = moveRef.current;
+    const speed = isCrouching ? 2 : (isRunning ? 8 : 4);
+    let vy = velocity.current[1];
 
     // Crouch Logic (Smooth Camera Lowering)
     const targetCrouch = isCrouching ? 0.8 : 0;
@@ -864,6 +883,11 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
       camera.position.y -= deltaCrouch;
       if (controlsRef.current) controlsRef.current.target.y -= deltaCrouch;
       currentCrouch.current = nextCrouch;
+    }
+
+    // Jetpack Logic
+    if (isJetpacking && jetpackFuel > 0) {
+      vy = 5;
     }
 
     // Movement Logic
@@ -879,7 +903,7 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
       moveVector.normalize().multiplyScalar(speed);
     }
     
-    api.velocity.set(moveVector.x, velocity.current[1], moveVector.z);
+    api.velocity.set(moveVector.x, vy, moveVector.z);
   });
 
   return (
@@ -1183,6 +1207,9 @@ export default function ARCanvas() {
   const [teleportPos, setTeleportPos] = useState<THREE.Vector3 | null>(null);
   const [isGrappling, setIsGrappling] = useState(false);
   const [isThermalVision, setIsThermalVision] = useState(false);
+  const [isJetpacking, setIsJetpacking] = useState(false);
+  const [jetpackFuel, setJetpackFuel] = useState(100);
+  const [isDroneMode, setIsDroneMode] = useState(false);
 
   useEffect(() => {
     if (activeArProduct) {
@@ -1280,6 +1307,20 @@ export default function ARCanvas() {
     return () => cancelAnimationFrame(animationFrameId);
   }, [isWalkMode, isRunning]);
 
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isJetpacking && jetpackFuel > 0) {
+      interval = setInterval(() => {
+        setJetpackFuel(f => Math.max(0, f - 2));
+      }, 50);
+    } else if (!isJetpacking && jetpackFuel < 100) {
+      interval = setInterval(() => {
+        setJetpackFuel(f => Math.min(100, f + 1));
+      }, 100);
+    }
+    return () => clearInterval(interval);
+  }, [isJetpacking, jetpackFuel]);
+
   const lightX = Math.sin(lightAngle * (Math.PI / 180)) * 10;
   const lightZ = Math.cos(lightAngle * (Math.PI / 180)) * 10;
 
@@ -1316,6 +1357,9 @@ export default function ARCanvas() {
     setTeleportPos(null);
     setIsGrappling(false);
     setIsThermalVision(false);
+    setIsJetpacking(false);
+    setJetpackFuel(100);
+    setIsDroneMode(false);
   };
 
   const cycleFloor = () => {
@@ -1479,6 +1523,37 @@ export default function ARCanvas() {
           title="Thermal Vision"
         >
           <Flame size={20} />
+        </button>
+      )}
+
+      {isWalkMode && (
+        <div className="absolute bottom-64 right-40 z-50 flex flex-col items-center gap-2">
+          <div className="h-24 w-3 bg-gray-700/50 rounded-full overflow-hidden border border-white/20 backdrop-blur-md relative">
+            <div 
+              className={`absolute bottom-0 left-0 right-0 transition-all duration-100 ${jetpackFuel < 20 ? 'bg-red-500' : 'bg-blue-500'}`}
+              style={{ height: `${jetpackFuel}%` }}
+            />
+          </div>
+          <button
+            className={`w-12 h-12 rounded-full backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors select-none touch-none ${isJetpacking ? 'bg-blue-500 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
+            onPointerDown={(e) => { e.preventDefault(); setIsJetpacking(true); }}
+            onPointerUp={(e) => { e.preventDefault(); setIsJetpacking(false); }}
+            onPointerLeave={() => setIsJetpacking(false)}
+            disabled={jetpackFuel <= 0}
+            title="Jetpack (Hold)"
+          >
+            <Rocket size={20} />
+          </button>
+        </div>
+      )}
+
+      {isWalkMode && (
+        <button
+          className={`absolute bottom-76 right-8 w-12 h-12 rounded-full backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors z-50 ${isDroneMode ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
+          onClick={() => setIsDroneMode(!isDroneMode)}
+          title="Drone Mode"
+        >
+          <Plane size={20} />
         </button>
       )}
 
@@ -1881,6 +1956,9 @@ export default function ARCanvas() {
                         teleportPos={teleportPos}
                         onTeleportComplete={() => setTeleportPos(null)}
                         isGrappling={isGrappling}
+                        isJetpacking={isJetpacking}
+                        jetpackFuel={jetpackFuel}
+                        isDroneMode={isDroneMode}
                         onLand={(pos) => dustRef.current?.trigger(pos.x, pos.y, pos.z)}
                       />
                     )}
