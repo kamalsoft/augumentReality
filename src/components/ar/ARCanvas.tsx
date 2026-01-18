@@ -2,7 +2,7 @@
 import { Suspense, useState, useRef, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, Environment, Html, useProgress, ContactShadows, Line, useTexture, Grid } from '@react-three/drei';
-import { Camera, Sun, RotateCw, Moon, RefreshCcw, Ruler, Play, Pause, HelpCircle, Layers, X, MousePointer2, SplitSquareHorizontal, Video, Square, Scan, Palette, Gamepad2, Save, List, Trash2, Aperture, SlidersHorizontal, Mic, MicOff, CloudRain, Snowflake, Image as ImageIcon, Clock, Feather, Upload, Film, Box, Zap, ArrowUp, ArrowDown, Eye, EyeOff, Flashlight } from 'lucide-react';
+import { Camera, Sun, RotateCw, Moon, RefreshCcw, Ruler, Play, Pause, HelpCircle, Layers, X, MousePointer2, SplitSquareHorizontal, Video, Square, Scan, Palette, Gamepad2, Save, List, Trash2, Aperture, SlidersHorizontal, Mic, MicOff, CloudRain, Snowflake, Image as ImageIcon, Clock, Feather, Upload, Film, Box, Zap, ArrowUp, ArrowDown, Eye, EyeOff, Flashlight, Hand, Key, Cctv, Glasses, Anchor, Flame } from 'lucide-react';
 import * as THREE from 'three';
 import { Physics, useBox, usePlane, useSphere } from '@react-three/cannon';
 import { useStore } from '@/lib/store';
@@ -25,6 +25,61 @@ const ARModel = forwardRef<THREE.Mesh, { color: string, imageUrl: string, roughn
 });
 ARModel.displayName = 'ARModel';
 
+const playSound = (type: 'open' | 'close' | 'locked' | 'pickup' | 'grapple') => {
+  if (typeof window === 'undefined') return;
+  const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  const now = ctx.currentTime;
+
+  if (type === 'open') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.linearRampToValueAtTime(400, now + 0.5);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.5);
+    osc.start(now);
+    osc.stop(now + 0.5);
+  } else if (type === 'close') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.linearRampToValueAtTime(200, now + 0.3);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.3);
+  } else if (type === 'locked') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(150, now);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.setValueAtTime(0, now + 0.1);
+    gain.gain.setValueAtTime(0.1, now + 0.15);
+    gain.gain.setValueAtTime(0, now + 0.25);
+    osc.start(now);
+    osc.stop(now + 0.3);
+  } else if (type === 'pickup') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+    osc.start(now);
+    osc.stop(now + 0.1);
+  } else if (type === 'grapple') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.linearRampToValueAtTime(200, now + 0.3);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.3);
+  }
+};
+
 function PhysicsProduct(props: any) {
   const [ref] = useBox<THREE.Mesh>(() => ({ mass: 1, position: [0, 5, 0], args: [1.5, 1.5, 1.5] }));
   return <ARModel ref={ref} position={[0, 0, 0]} {...props} />;
@@ -35,15 +90,312 @@ function PhysicsFloor() {
   return <mesh ref={ref} visible={false} />;
 }
 
+function KeyCard({ id, position, onCollect, isThermalVision }: { id: string, position: [number, number, number], onCollect: (id: string) => void, isThermalVision?: boolean }) {
+  const { camera } = useThree();
+  const [collecting, setCollecting] = useState(false);
+  const [ref] = useBox<THREE.Mesh>(() => ({
+    mass: 1,
+    args: [0.3, 0.05, 0.5],
+    position,
+    type: 'Kinematic'
+  }));
+
+  const pos = useRef([0, 0, 0]);
+  useEffect(() => api.position.subscribe((v) => (pos.current = v)), [api.position]);
+
+  useFrame((state, delta) => {
+    if (collecting) {
+      const currentPos = new THREE.Vector3(pos.current[0], pos.current[1], pos.current[2]);
+      const target = new THREE.Vector3(0, -0.2, -0.5).applyMatrix4(camera.matrixWorld);
+      const newPos = currentPos.lerp(target, delta * 8);
+      api.position.set(newPos.x, newPos.y, newPos.z);
+      
+      if (currentPos.distanceTo(target) < 0.2) {
+        onCollect(id);
+      }
+    } else {
+      const t = state.clock.getElapsedTime();
+      const yOffset = Math.sin(t * 2) * 0.1;
+      api.position.set(position[0], position[1] + yOffset, position[2]);
+      api.rotation.set(0, t, 0);
+    }
+  });
+
+  const handleCollect = () => {
+    if (collecting) return;
+    playSound('pickup');
+    setCollecting(true);
+    api.mass.set(0);
+    api.velocity.set(0, 0, 0);
+    api.angularVelocity.set(0, 0, 0);
+  };
+
+  return (
+    <mesh ref={ref} userData={{ isInteractive: true, onInteract: handleCollect }} castShadow>
+      <boxGeometry args={[0.3, 0.05, 0.5]} />
+      {isThermalVision ? (
+        <meshBasicMaterial color="#ffaa00" toneMapped={false} />
+      ) : (
+        <meshStandardMaterial color="#ffd700" metalness={0.8} roughness={0.2} />
+      )}
+      <Html position={[0, 0.2, 0]} center distanceFactor={5}>
+        <div className="bg-black/50 text-white text-[8px] px-1 rounded border border-white/20 whitespace-nowrap">KEY CARD</div>
+      </Html>
+    </mesh>
+  );
+}
+
 function RoomWalls() {
   usePlane(() => ({ position: [0, 0, -10], rotation: [0, 0, 0] }));
   usePlane(() => ({ position: [0, 0, 10], rotation: [0, Math.PI, 0] }));
   usePlane(() => ({ position: [-10, 0, 0], rotation: [0, Math.PI / 2, 0] }));
   usePlane(() => ({ position: [10, 0, 0], rotation: [0, -Math.PI / 2, 0] }));
-  return null;
+  // Ceiling physics
+  usePlane(() => ({ position: [0, 10, 0], rotation: [Math.PI / 2, 0, 0] }));
+
+  // Render invisible meshes for raycasting (Grappling Hook)
+  return (
+    <group>
+      <mesh position={[0, 5, -10]}>
+        <planeGeometry args={[20, 10]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      <mesh position={[0, 5, 10]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[20, 10]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      <mesh position={[-10, 5, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <planeGeometry args={[20, 10]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      <mesh position={[10, 5, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[20, 10]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      <mesh position={[0, 10, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[20, 20]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+    </group>
+  );
 }
 
-function Floor({ type }: { type: string }) {
+function DoorOpenEffect({ trigger }: { trigger: boolean }) {
+  const mesh = useRef<THREE.InstancedMesh>(null);
+  const count = 50;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const particles = useRef<{x:number, y:number, z:number, vx:number, vy:number, vz:number, life:number}[]>([]);
+
+  useEffect(() => {
+    if (trigger) {
+      particles.current = new Array(count).fill(0).map(() => ({
+        x: (Math.random() - 0.5) * 2,
+        y: (Math.random() - 0.5) * 3,
+        z: (Math.random() - 0.5) * 0.5,
+        vx: (Math.random() - 0.5) * 0.1,
+        vy: (Math.random() - 0.5) * 0.1,
+        vz: (Math.random() - 0.5) * 0.1,
+        life: 1.0
+      }));
+    }
+  }, [trigger]);
+
+  useFrame((state, delta) => {
+    if (!mesh.current) return;
+    let anyAlive = false;
+    particles.current.forEach((p, i) => {
+      if (p.life > 0) {
+        anyAlive = true;
+        p.life -= delta * 1.5;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.z += p.vz;
+        dummy.position.set(p.x, p.y, p.z);
+        const s = Math.max(0, p.life * 0.15);
+        dummy.scale.set(s, s, s);
+        dummy.updateMatrix();
+        mesh.current!.setMatrixAt(i, dummy.matrix);
+      } else {
+        dummy.scale.set(0,0,0);
+        dummy.updateMatrix();
+        mesh.current!.setMatrixAt(i, dummy.matrix);
+      }
+    });
+    if (anyAlive || trigger) mesh.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
+      <octahedronGeometry args={[0.1, 0]} />
+      <meshStandardMaterial color="#ffff00" emissive="#ffaa00" emissiveIntensity={2} transparent opacity={0.8} />
+    </instancedMesh>
+  );
+}
+
+function SecurityCamera({ position, playerPosRef, isThermalVision }: { position: [number, number, number], playerPosRef: React.MutableRefObject<THREE.Vector3>, isThermalVision?: boolean }) {
+  const headRef = useRef<THREE.Group>(null);
+  const target = useMemo(() => new THREE.Vector3(), []);
+
+  useFrame((state, delta) => {
+    if (headRef.current && playerPosRef.current) {
+      // Smoothly look at player
+      target.lerp(playerPosRef.current, delta * 3);
+      headRef.current.lookAt(target);
+    }
+  });
+
+  return (
+    <group position={position}>
+      {/* Mount */}
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.05, 0.05, 1]} />
+        {isThermalVision ? <meshBasicMaterial color="#ff5500" toneMapped={false} /> : <meshStandardMaterial color="#222" />}
+      </mesh>
+      {/* Moving Head */}
+      <group ref={headRef} position={[0, 0, 0]}>
+        <mesh rotation={[0, Math.PI, 0]}>
+           <boxGeometry args={[0.3, 0.3, 0.5]} />
+           {isThermalVision ? <meshBasicMaterial color="#ffaa00" toneMapped={false} /> : <meshStandardMaterial color="#444" />}
+        </mesh>
+        {/* Lens */}
+        <mesh position={[0, 0, 0.25]} rotation={[Math.PI/2, 0, 0]}>
+           <cylinderGeometry args={[0.1, 0.1, 0.1]} />
+           <meshStandardMaterial color="#111" />
+        </mesh>
+        {/* Status Light */}
+        <mesh position={[0.1, 0.1, 0.25]}>
+           <sphereGeometry args={[0.03]} />
+           <meshBasicMaterial color="red" />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+function GhostTrail({ playerPosRef, isRunning }: { playerPosRef: React.MutableRefObject<THREE.Vector3>, isRunning: boolean }) {
+  const mesh = useRef<THREE.InstancedMesh>(null);
+  const count = 30;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const trails = useRef<{x:number, y:number, z:number, age:number}[]>([]);
+
+  useFrame((state, delta) => {
+    if (!mesh.current || !playerPosRef.current) return;
+    
+    // Spawn trail if running
+    if (isRunning) {
+       const last = trails.current[trails.current.length - 1];
+       const curr = playerPosRef.current;
+       // Only spawn if moved enough distance
+       if (!last || new THREE.Vector3(last.x, last.y, last.z).distanceTo(curr) > 0.5) {
+         trails.current.push({ x: curr.x, y: curr.y, z: curr.z, age: 0 });
+         if (trails.current.length > count) trails.current.shift();
+       }
+    }
+
+    // Update trails
+    trails.current.forEach((t, i) => {
+      t.age += delta * 2; // Fade speed
+      const scale = Math.max(0, 1 - t.age);
+      dummy.position.set(t.x, t.y, t.z);
+      dummy.scale.setScalar(scale * 0.5);
+      dummy.updateMatrix();
+      mesh.current!.setMatrixAt(i, dummy.matrix);
+    });
+    
+    // Hide unused instances
+    for(let i = trails.current.length; i < count; i++) {
+       dummy.scale.set(0,0,0);
+       dummy.updateMatrix();
+       mesh.current.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 8, 8]} />
+      <meshBasicMaterial color="#00ffff" transparent opacity={0.3} />
+    </instancedMesh>
+  );
+}
+
+function InteractiveDoor({ position = [0, 0, 0], locked = false, keyId, inventory = [], playerPosRef, isThermalVision }: { position?: [number, number, number], locked?: boolean, keyId?: string, inventory?: string[], playerPosRef?: React.MutableRefObject<THREE.Vector3>, isThermalVision?: boolean }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [showEffect, setShowEffect] = useState(false);
+  const [ref, api] = useBox<THREE.Mesh>(() => ({
+    mass: 1,
+    type: 'Kinematic',
+    position,
+    args: [2.5, 4, 0.2]
+  }));
+
+  const toggleOpen = () => {
+    if (locked && keyId && !inventory.includes(keyId)) {
+      playSound('locked');
+      return;
+    }
+    if (!isOpen) {
+      setShowEffect(true);
+      setTimeout(() => setShowEffect(false), 500);
+    }
+    playSound(isOpen ? 'close' : 'open');
+    setIsOpen(p => !p);
+  };
+
+  useFrame(() => {
+    if (playerPosRef?.current) {
+      const doorPos = new THREE.Vector3(position[0], position[1], position[2]);
+      const dist = doorPos.distanceTo(playerPosRef.current);
+      
+      if (dist < 3) {
+        if (!isOpen) {
+           if (locked && keyId && !inventory.includes(keyId)) {
+             // Locked, do nothing automatically
+           } else {
+             setIsOpen(true);
+             setShowEffect(true);
+             setTimeout(() => setShowEffect(false), 500);
+             playSound('open');
+           }
+        }
+      } else if (dist > 3.5 && isOpen) {
+        setIsOpen(false);
+        playSound('close');
+      }
+    }
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      api.rotation.set(0, Math.PI / 2, 0);
+      api.position.set(position[0] + 1.25, position[1], position[2] + 1.25);
+    } else {
+      api.rotation.set(0, 0, 0);
+      api.position.set(position[0], position[1], position[2]);
+    }
+  }, [isOpen, api, position]);
+
+  return (
+    <mesh ref={ref} userData={{ isInteractive: true, onInteract: toggleOpen }} castShadow receiveShadow>
+      <boxGeometry args={[2.5, 4, 0.2]} />
+      {isThermalVision ? (
+        <meshBasicMaterial color={isOpen ? "#00ff00" : (locked ? "#ff0000" : "#ffaa00")} toneMapped={false} />
+      ) : (
+        <meshStandardMaterial color={isOpen ? "#4ade80" : (locked ? "#ef4444" : "#60a5fa")} roughness={0.2} metalness={0.8} />
+      )}
+      {/* Door Handle */}
+      <mesh position={[1, 0, 0.15]}><sphereGeometry args={[0.15]} /><meshStandardMaterial color="gold" /></mesh>
+      {locked && !isOpen && (
+        <Html position={[0, 1, 0.2]} transform scale={0.5}>
+           <div className="bg-red-500/80 text-white px-2 py-1 rounded text-xs font-bold border border-white/20">LOCKED</div>
+        </Html>
+      )}
+      <DoorOpenEffect trigger={showEffect} />
+    </mesh>
+  );
+}
+
+function Floor({ type, onTeleport }: { type: string, onTeleport?: (point: THREE.Vector3) => void }) {
   if (type === 'none') return null;
 
   const getMaterialProps = () => {
@@ -56,7 +408,17 @@ function Floor({ type }: { type: string }) {
   };
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+    <mesh 
+      rotation={[-Math.PI / 2, 0, 0]} 
+      position={[0, 0.01, 0]} 
+      receiveShadow
+      onClick={(e) => {
+        if (onTeleport) {
+          e.stopPropagation();
+          onTeleport(e.point);
+        }
+      }}
+    >
       <planeGeometry args={[20, 20]} />
       <meshStandardMaterial {...getMaterialProps()} />
     </mesh>
@@ -263,10 +625,12 @@ function SavedDesignsModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
+function Joystick({ onMove, onSprint }: { onMove: (x: number, y: number) => void, onSprint?: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const lastDownTime = useRef(0);
+  const potentialSprint = useRef(false);
 
   const handleMove = (clientX: number, clientY: number) => {
     if (!containerRef.current) return;
@@ -286,6 +650,11 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
 
     setPosition({ x: dx, y: dy });
     onMove(dx / maxDist, dy / maxDist);
+
+    if (potentialSprint.current && onSprint && (dy / maxDist) < -0.5) {
+      onSprint();
+      potentialSprint.current = false;
+    }
   };
 
   return (
@@ -294,6 +663,13 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
       className="absolute bottom-8 left-8 w-32 h-32 rounded-full bg-white/10 backdrop-blur-md border border-white/20 touch-none z-50"
       onPointerDown={(e) => {
         setActive(true);
+        const now = Date.now();
+        if (now - lastDownTime.current < 300) {
+          potentialSprint.current = true;
+        } else {
+          potentialSprint.current = false;
+        }
+        lastDownTime.current = now;
         (e.target as Element).setPointerCapture(e.pointerId);
         handleMove(e.clientX, e.clientY);
       }}
@@ -304,6 +680,7 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
         setActive(false);
         setPosition({ x: 0, y: 0 });
         onMove(0, 0);
+        potentialSprint.current = false;
         (e.target as Element).releasePointerCapture(e.pointerId);
       }}
     >
@@ -346,8 +723,8 @@ function Minimap({ playerPosRef }: { playerPosRef: React.MutableRefObject<THREE.
   );
 }
 
-function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCount, isThirdPerson, onLand, playerPosRef }: { moveRef: React.MutableRefObject<{x:number, y:number}>, controlsRef: any, isRunning: boolean, isCrouching: boolean, jumpCount: number, isThirdPerson: boolean, onLand: (pos: THREE.Vector3) => void, playerPosRef: React.MutableRefObject<THREE.Vector3> }) {
-  const { camera } = useThree();
+function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCount, isThirdPerson, onLand, playerPosRef, teleportPos, onTeleportComplete, isGrappling }: { moveRef: React.MutableRefObject<{x:number, y:number}>, controlsRef: any, isRunning: boolean, isCrouching: boolean, jumpCount: number, isThirdPerson: boolean, onLand: (pos: THREE.Vector3) => void, playerPosRef: React.MutableRefObject<THREE.Vector3>, teleportPos?: THREE.Vector3 | null, onTeleportComplete?: () => void, isGrappling: boolean }) {
+  const { camera, scene } = useThree();
   
   const playCollisionSound = useMemo(() => {
     let audioCtx: AudioContext | null = null;
@@ -404,6 +781,8 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
   const moveVector = useMemo(() => new THREE.Vector3(), []);
   const prevPos = useRef(new THREE.Vector3(0, 2, 6));
   const currentCrouch = useRef(0);
+  const [grapplePoint, setGrapplePoint] = useState<THREE.Vector3 | null>(null);
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
 
   useEffect(() => {
     if (jumpCount > 0) {
@@ -413,6 +792,14 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
       }
     }
   }, [jumpCount, api]);
+
+  useEffect(() => {
+    if (teleportPos && ref.current) {
+      api.position.set(teleportPos.x, teleportPos.y + 1.6, teleportPos.z);
+      api.velocity.set(0, 0, 0);
+      if (onTeleportComplete) onTeleportComplete();
+    }
+  }, [teleportPos, api, onTeleportComplete]);
 
   useEffect(() => {
     if (!controlsRef.current) return;
@@ -426,6 +813,30 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
 
   useFrame(() => {
     if (!ref.current) return;
+
+    // Grappling Hook Logic
+    if (isGrappling) {
+      if (!grapplePoint) {
+        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+        const intersects = raycaster.intersectObjects(scene.children, true);
+        // Filter out player and triggers, look for walls/floor/ceiling
+        const hit = intersects.find(i => i.object.type === 'Mesh' && !i.object.userData.isPlayer && !i.object.userData.isInteractive);
+        if (hit) {
+          setGrapplePoint(hit.point);
+          playSound('grapple');
+        }
+      } else {
+        // Pull player towards grapple point
+        const dir = new THREE.Vector3().subVectors(grapplePoint, camera.position).normalize();
+        const dist = camera.position.distanceTo(grapplePoint);
+        if (dist > 1.5) {
+          api.velocity.set(dir.x * 15, dir.y * 15, dir.z * 15);
+          return; // Skip normal movement
+        }
+      }
+    } else if (grapplePoint) {
+      setGrapplePoint(null);
+    }
 
     const { x, y } = moveRef.current;
     const speed = isCrouching ? 2 : (isRunning ? 8 : 4);
@@ -471,8 +882,32 @@ function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCo
     api.velocity.set(moveVector.x, velocity.current[1], moveVector.z);
   });
 
-  return <mesh ref={ref} />;
+  return (
+    <mesh ref={ref}>
+      {/* Visual representation of player (visible in 3rd person) */}
+      <sphereGeometry args={[0.5]} />
+      <meshStandardMaterial color="cyan" wireframe={true} visible={isThirdPerson} />
+    </mesh>
+  );
 }
+
+const InteractionManager = forwardRef((_, ref) => {
+  const { camera, scene } = useThree();
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+
+  useImperativeHandle(ref, () => ({
+    interact: () => {
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const intersects = raycaster.intersectObjects(scene.children, true);
+      const hit = intersects.find(i => i.object.userData?.isInteractive);
+      if (hit && hit.object.userData.onInteract) {
+        hit.object.userData.onInteract();
+      }
+    }
+  }));
+  return null;
+});
+InteractionManager.displayName = 'InteractionManager';
 
 function HelpModal({ onClose }: { onClose: () => void }) {
   return (
@@ -504,6 +939,13 @@ function HelpModal({ onClose }: { onClose: () => void }) {
             <div>
               <span className="font-bold text-white block">Environment</span>
               <span className="text-sm text-gray-400">Change floor material or room scene.</span>
+            </div>
+          </li>
+          <li className="flex items-start gap-3">
+            <Gamepad2 size={20} className="mt-1 text-primary" />
+            <div>
+              <span className="font-bold text-white block">Movement</span>
+              <span className="text-sm text-gray-400">Joystick to move. Double-tap or toggle Run to sprint. Crouch button to sneak.</span>
             </div>
           </li>
         </ul>
@@ -735,6 +1177,12 @@ export default function ARCanvas() {
   const [isCrouching, setIsCrouching] = useState(false);
   const playerPosRef = useRef(new THREE.Vector3());
   const [isFlashlightOn, setIsFlashlightOn] = useState(false);
+  const interactionRef = useRef<any>(null);
+  const [inventory, setInventory] = useState<string[]>([]);
+  const [isNightVision, setIsNightVision] = useState(false);
+  const [teleportPos, setTeleportPos] = useState<THREE.Vector3 | null>(null);
+  const [isGrappling, setIsGrappling] = useState(false);
+  const [isThermalVision, setIsThermalVision] = useState(false);
 
   useEffect(() => {
     if (activeArProduct) {
@@ -863,6 +1311,11 @@ export default function ARCanvas() {
     setIsCrouching(false);
     setIsFlashlightOn(false);
     controlsRef.current?.reset();
+    setInventory([]);
+    setIsNightVision(false);
+    setTeleportPos(null);
+    setIsGrappling(false);
+    setIsThermalVision(false);
   };
 
   const cycleFloor = () => {
@@ -906,6 +1359,26 @@ export default function ARCanvas() {
       {showSavedDesigns && <SavedDesignsModal onClose={() => setShowSavedDesigns(false)} />}
       {showGallery && <GalleryModal screenshots={screenshots} onClose={() => setShowGallery(false)} />}
       
+      {/* Night Vision Overlay */}
+      {isNightVision && (
+        <div className="absolute inset-0 z-[60] pointer-events-none overflow-hidden">
+          <div className="absolute inset-0 bg-green-500/20 mix-blend-overlay" />
+          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-150 contrast-200" />
+          <div className="absolute inset-0 bg-green-900/10" style={{ boxShadow: 'inset 0 0 100px rgba(0,0,0,0.9)' }} />
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 text-green-500 font-mono text-xs tracking-[0.5em] animate-pulse">NIGHT VISION ACTIVE</div>
+        </div>
+      )}
+      
+      {/* Thermal Vision Overlay */}
+      {isThermalVision && (
+        <div className="absolute inset-0 z-[60] pointer-events-none overflow-hidden">
+          <div className="absolute inset-0 bg-blue-900/40 mix-blend-multiply" />
+          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-30 brightness-150 contrast-200" />
+          <div className="absolute inset-0 bg-gradient-to-b from-blue-900/20 to-purple-900/20" />
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 text-orange-500 font-mono text-xs tracking-[0.5em] animate-pulse">THERMAL OPTICS ONLINE</div>
+        </div>
+      )}
+
       {isScanning && (
         <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
           <div className="glass-panel px-8 py-4 rounded-full flex flex-col items-center gap-2 animate-in fade-in zoom-in duration-300">
@@ -916,7 +1389,10 @@ export default function ARCanvas() {
       )}
 
       {isWalkMode && (
-        <Joystick onMove={(x, y) => { moveRef.current = { x, y }; }} />
+        <Joystick 
+          onMove={(x, y) => { moveRef.current = { x, y }; }} 
+          onSprint={() => setIsRunning(true)}
+        />
       )}
       
       {isWalkMode && <Minimap playerPosRef={playerPosRef} />}
@@ -974,6 +1450,47 @@ export default function ARCanvas() {
         </button>
       )}
 
+      {isWalkMode && (
+        <button
+          className="absolute bottom-52 right-24 w-16 h-16 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center active:bg-white/30 transition-colors z-50"
+          onClick={() => interactionRef.current?.interact()}
+          title="Interact"
+        >
+          <Hand size={24} className="text-white" />
+        </button>
+      )}
+
+      {isWalkMode && (
+        <button
+          className={`absolute bottom-64 right-8 w-12 h-12 rounded-full backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors z-50 select-none touch-none ${isGrappling ? 'bg-green-500 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
+          onPointerDown={(e) => { e.preventDefault(); setIsGrappling(true); }}
+          onPointerUp={(e) => { e.preventDefault(); setIsGrappling(false); }}
+          onPointerLeave={() => setIsGrappling(false)}
+          title="Grappling Hook (Hold)"
+        >
+          <Anchor size={20} />
+        </button>
+      )}
+
+      {isWalkMode && (
+        <button
+          className={`absolute bottom-64 right-24 w-12 h-12 rounded-full backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors z-50 ${isThermalVision ? 'bg-orange-500 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
+          onClick={() => setIsThermalVision(!isThermalVision)}
+          title="Thermal Vision"
+        >
+          <Flame size={20} />
+        </button>
+      )}
+
+      {isWalkMode && inventory.length > 0 && (
+        <div className="absolute top-6 left-8 flex flex-col gap-2 z-40">
+          <div className="bg-black/40 backdrop-blur-md p-2 rounded-lg border border-white/20 flex items-center gap-2 text-white">
+            <Key size={16} className="text-yellow-400" />
+            <span className="text-xs font-bold">KEY CARD ACQUIRED</span>
+          </div>
+        </div>
+      )}
+
       {/* Simulated Camera Background */}
       <div 
         className="absolute inset-0 bg-cover bg-center z-0 transition-all duration-700"
@@ -981,7 +1498,9 @@ export default function ARCanvas() {
           backgroundImage: `url(${bgImage})`,
           filter: [
             isNightMode ? 'brightness(0.3) contrast(1.2) hue-rotate(-10deg)' : '',
-            isFocusMode ? 'blur(5px)' : ''
+            isFocusMode ? 'blur(5px)' : '',
+            isNightVision ? 'grayscale(100%) sepia(100%) hue-rotate(50deg) brightness(1.2) contrast(1.2)' : '',
+            isThermalVision ? 'grayscale(100%) brightness(0.5) contrast(1.5) hue-rotate(180deg)' : ''
           ].filter(Boolean).join(' ') || 'none'
         }}
       />
@@ -1198,6 +1717,14 @@ export default function ARCanvas() {
               <span className="text-[10px] font-bold uppercase">Texture</span>
             </button>
             <button
+              onClick={() => setIsNightVision(!isNightVision)}
+              className={`flex-1 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors ${isNightVision ? 'bg-green-500 text-black' : 'bg-white/5 hover:bg-white/10'}`}
+              title="Night Vision"
+            >
+              <Glasses size={14} />
+              <span className="text-[10px] font-bold uppercase">NVG</span>
+            </button>
+            <button
               onClick={() => setCinematicMode(true)}
               className="flex-1 py-2 rounded-lg flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 transition-colors"
               title="Cinematic Mode"
@@ -1329,11 +1856,17 @@ export default function ARCanvas() {
                         <PhysicsProduct color={productColor} imageUrl={activeArProduct.image} roughness={roughness} metalness={metalness} customTexture={customTexture} />
                         <PhysicsFloor />
                         <RoomWalls />
+                        <InteractiveDoor position={[0, 2, -9.8]} locked={true} keyId="key-1" inventory={inventory} playerPosRef={playerPosRef} isThermalVision={isThermalVision} />
+                        <SecurityCamera position={[8, 4, 8]} playerPosRef={playerPosRef} isThermalVision={isThermalVision} />
+                        <GhostTrail playerPosRef={playerPosRef} isRunning={isRunning} />
+                        {!inventory.includes('key-1') && (
+                          <KeyCard id="key-1" position={[3, 0.5, 3]} onCollect={(id) => setInventory(prev => [...prev, id])} isThermalVision={isThermalVision} />
+                        )}
                       </>
                     ) : (
                       <ARModel color={productColor} imageUrl={activeArProduct.image} roughness={roughness} metalness={metalness} customTexture={customTexture} />
                     )}
-                    <Floor type={floorType} />
+                    <Floor type={floorType} onTeleport={isWalkMode ? setTeleportPos : undefined} />
                     <ContactShadows resolution={1024} scale={20} blur={2} opacity={0.5} far={10} color="#000000" />
                     {showDimensions && <DimensionsOverlay />}
                     {isWalkMode && (
@@ -1345,9 +1878,13 @@ export default function ARCanvas() {
                         jumpCount={jumpCount} 
                         isThirdPerson={isThirdPerson}
                         playerPosRef={playerPosRef}
+                        teleportPos={teleportPos}
+                        onTeleportComplete={() => setTeleportPos(null)}
+                        isGrappling={isGrappling}
                         onLand={(pos) => dustRef.current?.trigger(pos.x, pos.y, pos.z)}
                       />
                     )}
+                    <InteractionManager ref={interactionRef} />
                  </group>
                </Physics>
             )}
