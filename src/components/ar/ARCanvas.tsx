@@ -1,8 +1,8 @@
 'use client';
-import { Suspense, useState, useRef, useEffect, useMemo, forwardRef } from 'react';
+import { Suspense, useState, useRef, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, Environment, Html, useProgress, ContactShadows, Line, useTexture, Grid } from '@react-three/drei';
-import { Camera, Sun, RotateCw, Moon, RefreshCcw, Ruler, Play, Pause, HelpCircle, Layers, X, MousePointer2, SplitSquareHorizontal, Video, Square, Scan, Palette, Gamepad2, Save, List, Trash2, Aperture, SlidersHorizontal, Mic, MicOff, CloudRain, Snowflake, Image as ImageIcon, Clock, Feather, Upload, Film, Box, Zap, ArrowUp } from 'lucide-react';
+import { Camera, Sun, RotateCw, Moon, RefreshCcw, Ruler, Play, Pause, HelpCircle, Layers, X, MousePointer2, SplitSquareHorizontal, Video, Square, Scan, Palette, Gamepad2, Save, List, Trash2, Aperture, SlidersHorizontal, Mic, MicOff, CloudRain, Snowflake, Image as ImageIcon, Clock, Feather, Upload, Film, Box, Zap, ArrowUp, ArrowDown, Eye, EyeOff, Flashlight } from 'lucide-react';
 import * as THREE from 'three';
 import { Physics, useBox, usePlane, useSphere } from '@react-three/cannon';
 import { useStore } from '@/lib/store';
@@ -33,6 +33,14 @@ function PhysicsProduct(props: any) {
 function PhysicsFloor() {
   const [ref] = usePlane<THREE.Mesh>(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0] }));
   return <mesh ref={ref} visible={false} />;
+}
+
+function RoomWalls() {
+  usePlane(() => ({ position: [0, 0, -10], rotation: [0, 0, 0] }));
+  usePlane(() => ({ position: [0, 0, 10], rotation: [0, Math.PI, 0] }));
+  usePlane(() => ({ position: [-10, 0, 0], rotation: [0, Math.PI / 2, 0] }));
+  usePlane(() => ({ position: [10, 0, 0], rotation: [0, -Math.PI / 2, 0] }));
+  return null;
 }
 
 function Floor({ type }: { type: string }) {
@@ -104,6 +112,59 @@ function WeatherSystem({ type }: { type: 'rain' | 'snow' }) {
     </instancedMesh>
   );
 }
+
+const DustParticles = forwardRef((_, ref) => {
+  const mesh = useRef<THREE.InstancedMesh>(null);
+  const count = 20;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const particles = useRef<{life: number, x: number, y: number, z: number, vx: number, vy: number, vz: number}[]>([]);
+
+  useImperativeHandle(ref, () => ({
+    trigger: (x: number, y: number, z: number) => {
+      for(let i=0; i<count; i++) {
+         particles.current[i] = {
+           life: 1.0,
+           x: x + (Math.random() - 0.5) * 0.5,
+           y: y,
+           z: z + (Math.random() - 0.5) * 0.5,
+           vx: (Math.random() - 0.5) * 2,
+           vy: Math.random() * 1,
+           vz: (Math.random() - 0.5) * 2
+         };
+      }
+    }
+  }));
+
+  useFrame((state, delta) => {
+    if (!mesh.current) return;
+    particles.current.forEach((p, i) => {
+       if (p && p.life > 0) {
+         p.life -= delta * 2;
+         p.x += p.vx * delta;
+         p.y += p.vy * delta;
+         p.z += p.vz * delta;
+         dummy.position.set(p.x, p.y, p.z);
+         const s = p.life * 0.3;
+         dummy.scale.set(s, s, s);
+         dummy.updateMatrix();
+         mesh.current!.setMatrixAt(i, dummy.matrix);
+       } else {
+         dummy.scale.set(0,0,0);
+         dummy.updateMatrix();
+         mesh.current!.setMatrixAt(i, dummy.matrix);
+       }
+    });
+    mesh.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
+       <sphereGeometry args={[1, 8, 8]} />
+       <meshBasicMaterial color="#dddddd" transparent opacity={0.4} />
+    </instancedMesh>
+  );
+});
+DustParticles.displayName = 'DustParticles';
 
 function GalleryModal({ screenshots, onClose }: { screenshots: string[], onClose: () => void }) {
   return (
@@ -254,7 +315,38 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
   );
 }
 
-function PlayerController({ moveRef, controlsRef, isRunning, jumpCount }: { moveRef: React.MutableRefObject<{x:number, y:number}>, controlsRef: any, isRunning: boolean, jumpCount: number }) {
+function Minimap({ playerPosRef }: { playerPosRef: React.MutableRefObject<THREE.Vector3> }) {
+  const dotRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    let animId: number;
+    const update = () => {
+      if (dotRef.current && playerPosRef.current) {
+        // Map -10..10 to 0..100% (RoomWalls are at +/- 10)
+        const x = ((playerPosRef.current.x + 10) / 20) * 100;
+        const z = ((playerPosRef.current.z + 10) / 20) * 100;
+        dotRef.current.style.left = `${Math.max(0, Math.min(100, x))}%`;
+        dotRef.current.style.top = `${Math.max(0, Math.min(100, z))}%`;
+      }
+      animId = requestAnimationFrame(update);
+    };
+    update();
+    return () => cancelAnimationFrame(animId);
+  }, [playerPosRef]);
+
+  return (
+    <div className="absolute top-24 left-8 w-32 h-32 bg-black/40 backdrop-blur-md border border-white/20 rounded-lg overflow-hidden z-40 shadow-lg">
+       <div className="absolute inset-0 opacity-30" style={{ backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)', backgroundSize: '10px 10px' }}></div>
+       {/* Center (Product) */}
+       <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-primary rounded-full -ml-1 -mt-1 shadow-[0_0_10px_rgba(0,212,255,0.8)]" />
+       {/* Player */}
+       <div ref={dotRef} className="absolute w-3 h-3 bg-white rounded-full -ml-1.5 -mt-1.5 border border-black transition-transform duration-75 shadow-sm" />
+       <div className="absolute bottom-1 right-1 text-[8px] text-white/50 font-mono">MINIMAP</div>
+    </div>
+  );
+}
+
+function PlayerController({ moveRef, controlsRef, isRunning, isCrouching, jumpCount, isThirdPerson, onLand, playerPosRef }: { moveRef: React.MutableRefObject<{x:number, y:number}>, controlsRef: any, isRunning: boolean, isCrouching: boolean, jumpCount: number, isThirdPerson: boolean, onLand: (pos: THREE.Vector3) => void, playerPosRef: React.MutableRefObject<THREE.Vector3> }) {
   const { camera } = useThree();
   
   const playCollisionSound = useMemo(() => {
@@ -294,6 +386,9 @@ function PlayerController({ moveRef, controlsRef, isRunning, jumpCount }: { move
     onCollide: (e) => {
       if (e.contact.impactVelocity > 1.5) {
         playCollisionSound(e.contact.impactVelocity);
+        if (e.contact.impactVelocity > 2.0 && Math.abs(e.contact.ni[1]) > 0.5) {
+           onLand(new THREE.Vector3(e.target.position.x, e.target.position.y - 0.5, e.target.position.z));
+        }
       }
     }
   }));
@@ -308,6 +403,7 @@ function PlayerController({ moveRef, controlsRef, isRunning, jumpCount }: { move
   const right = useMemo(() => new THREE.Vector3(), []);
   const moveVector = useMemo(() => new THREE.Vector3(), []);
   const prevPos = useRef(new THREE.Vector3(0, 2, 6));
+  const currentCrouch = useRef(0);
 
   useEffect(() => {
     if (jumpCount > 0) {
@@ -318,11 +414,21 @@ function PlayerController({ moveRef, controlsRef, isRunning, jumpCount }: { move
     }
   }, [jumpCount, api]);
 
+  useEffect(() => {
+    if (!controlsRef.current) return;
+    const targetDist = isThirdPerson ? 4 : 0.1;
+    
+    const direction = new THREE.Vector3().subVectors(camera.position, controlsRef.current.target).normalize();
+    if (direction.lengthSq() < 0.0001) direction.set(0, 0, 1);
+    
+    camera.position.copy(controlsRef.current.target).add(direction.multiplyScalar(targetDist));
+  }, [isThirdPerson, camera, controlsRef]);
+
   useFrame(() => {
     if (!ref.current) return;
 
     const { x, y } = moveRef.current;
-    const speed = isRunning ? 8 : 4;
+    const speed = isCrouching ? 2 : (isRunning ? 8 : 4);
 
     // Sync Camera to Physics Body
     const currentPos = new THREE.Vector3(...pos.current);
@@ -334,6 +440,19 @@ function PlayerController({ moveRef, controlsRef, isRunning, jumpCount }: { move
         controlsRef.current.target.add(deltaPos);
       }
       prevPos.current.copy(currentPos);
+    }
+
+    // Update shared ref for minimap
+    playerPosRef.current.copy(currentPos);
+
+    // Crouch Logic (Smooth Camera Lowering)
+    const targetCrouch = isCrouching ? 0.8 : 0;
+    const nextCrouch = THREE.MathUtils.lerp(currentCrouch.current, targetCrouch, 0.1);
+    const deltaCrouch = nextCrouch - currentCrouch.current;
+    if (Math.abs(deltaCrouch) > 0.0001) {
+      camera.position.y -= deltaCrouch;
+      if (controlsRef.current) controlsRef.current.target.y -= deltaCrouch;
+      currentCrouch.current = nextCrouch;
     }
 
     // Movement Logic
@@ -539,7 +658,33 @@ function VideoRecorder() {
   );
 }
 
-function LightController({ lightRef }: { lightRef: React.RefObject<THREE.SpotLight> }) {
+function PlayerFlashlight({ isOn }: { isOn: boolean }) {
+  const ref = useRef<THREE.SpotLight>(null);
+  const target = useMemo(() => new THREE.Object3D(), []);
+  const { scene } = useThree();
+
+  useEffect(() => {
+    scene.add(target);
+    return () => { scene.remove(target); };
+  }, [scene, target]);
+
+  useFrame((state) => {
+    if (!ref.current) return;
+    ref.current.position.copy(state.camera.position);
+    const dir = new THREE.Vector3();
+    state.camera.getWorldDirection(dir);
+    target.position.copy(state.camera.position).add(dir.multiplyScalar(5));
+    ref.current.target.updateMatrixWorld();
+  });
+
+  return (
+    <spotLight 
+      ref={ref} target={target} visible={isOn} intensity={5} angle={0.6} penumbra={0.5} distance={50} castShadow color="#fff"
+    />
+  );
+}
+
+function LightController({ lightRef }: { lightRef: React.RefObject<THREE.SpotLight | null> }) {
   useFrame(() => {
     if (lightRef.current) {
       lightRef.current.target.updateMatrixWorld();
@@ -584,6 +729,12 @@ export default function ARCanvas() {
   const [isPhysicsMode, setIsPhysicsMode] = useState(false);
   const lightTarget = useMemo(() => new THREE.Object3D(), []);
   const lightRef = useRef<THREE.SpotLight>(null);
+  const [isThirdPerson, setIsThirdPerson] = useState(false);
+  const dustRef = useRef<any>(null);
+  const [stamina, setStamina] = useState(100);
+  const [isCrouching, setIsCrouching] = useState(false);
+  const playerPosRef = useRef(new THREE.Vector3());
+  const [isFlashlightOn, setIsFlashlightOn] = useState(false);
 
   useEffect(() => {
     if (activeArProduct) {
@@ -654,6 +805,33 @@ export default function ARCanvas() {
     return () => cancelAnimationFrame(animationFrameId);
   }, [isDayNightCycle, isNightMode]);
 
+  useEffect(() => {
+    if (!isWalkMode) {
+      setStamina(100);
+      return;
+    }
+
+    let animationFrameId: number;
+    const updateStamina = () => {
+      setStamina((prev) => {
+        const isMoving = moveRef.current.x !== 0 || moveRef.current.y !== 0;
+        if (isRunning && isMoving) {
+          const next = prev - 0.5;
+          if (next <= 0) {
+            setIsRunning(false);
+            return 0;
+          }
+          return next;
+        } else {
+          return Math.min(100, prev + 0.5);
+        }
+      });
+      animationFrameId = requestAnimationFrame(updateStamina);
+    };
+    updateStamina();
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isWalkMode, isRunning]);
+
   const lightX = Math.sin(lightAngle * (Math.PI / 180)) * 10;
   const lightZ = Math.cos(lightAngle * (Math.PI / 180)) * 10;
 
@@ -681,6 +859,9 @@ export default function ARCanvas() {
     setCustomTexture(null);
     setCinematicMode(false);
     setIsPhysicsMode(false);
+    setIsThirdPerson(false);
+    setIsCrouching(false);
+    setIsFlashlightOn(false);
     controlsRef.current?.reset();
   };
 
@@ -738,15 +919,58 @@ export default function ARCanvas() {
         <Joystick onMove={(x, y) => { moveRef.current = { x, y }; }} />
       )}
       
+      {isWalkMode && <Minimap playerPosRef={playerPosRef} />}
+
+      {isWalkMode && (
+        <div className="absolute bottom-10 left-44 w-48 h-3 bg-gray-700/50 rounded-full overflow-hidden border border-white/20 backdrop-blur-md z-50">
+          <div 
+            className={`h-full transition-all duration-100 ${stamina < 20 ? 'bg-red-500' : 'bg-primary'}`}
+            style={{ width: `${stamina}%` }}
+          />
+        </div>
+      )}
+
       {isWalkMode && (
         <button
-          className="absolute bottom-8 right-8 w-24 h-24 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center active:bg-primary/40 transition-colors z-50 touch-none"
+          className="absolute bottom-8 right-8 w-24 h-24 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center active:bg-primary/40 transition-colors z-50 touch-none select-none"
           onPointerDown={(e) => {
             e.preventDefault();
             setJumpCount(c => c + 1);
           }}
         >
           <ArrowUp size={32} className="text-white" />
+        </button>
+      )}
+
+      {isWalkMode && (
+        <button
+          className={`absolute bottom-8 right-36 w-16 h-16 rounded-full backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors z-50 touch-none select-none ${isCrouching ? 'bg-primary text-black' : 'bg-white/10 text-white active:bg-white/20'}`}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            setIsCrouching(!isCrouching);
+          }}
+        >
+          <ArrowDown size={24} />
+        </button>
+      )}
+
+      {isWalkMode && (
+        <button
+          className="absolute bottom-36 right-8 w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors z-50"
+          onClick={() => setIsThirdPerson(!isThirdPerson)}
+          title="Toggle View"
+        >
+          {isThirdPerson ? <Eye size={20} className="text-white" /> : <EyeOff size={20} className="text-white" />}
+        </button>
+      )}
+
+      {isWalkMode && (
+        <button
+          className={`absolute bottom-52 right-8 w-12 h-12 rounded-full backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors z-50 ${isFlashlightOn ? 'bg-yellow-400/80 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
+          onClick={() => setIsFlashlightOn(!isFlashlightOn)}
+          title="Toggle Flashlight"
+        >
+          <Flashlight size={20} />
         </button>
       )}
 
@@ -1104,6 +1328,7 @@ export default function ARCanvas() {
                       <>
                         <PhysicsProduct color={productColor} imageUrl={activeArProduct.image} roughness={roughness} metalness={metalness} customTexture={customTexture} />
                         <PhysicsFloor />
+                        <RoomWalls />
                       </>
                     ) : (
                       <ARModel color={productColor} imageUrl={activeArProduct.image} roughness={roughness} metalness={metalness} customTexture={customTexture} />
@@ -1111,7 +1336,18 @@ export default function ARCanvas() {
                     <Floor type={floorType} />
                     <ContactShadows resolution={1024} scale={20} blur={2} opacity={0.5} far={10} color="#000000" />
                     {showDimensions && <DimensionsOverlay />}
-                    {isWalkMode && <PlayerController moveRef={moveRef} controlsRef={controlsRef} isRunning={isRunning} jumpCount={jumpCount} />}
+                    {isWalkMode && (
+                      <PlayerController 
+                        moveRef={moveRef} 
+                        controlsRef={controlsRef} 
+                        isRunning={isRunning} 
+                        isCrouching={isCrouching}
+                        jumpCount={jumpCount} 
+                        isThirdPerson={isThirdPerson}
+                        playerPosRef={playerPosRef}
+                        onLand={(pos) => dustRef.current?.trigger(pos.x, pos.y, pos.z)}
+                      />
+                    )}
                  </group>
                </Physics>
             )}
@@ -1126,7 +1362,9 @@ export default function ARCanvas() {
             )}
 
             {weatherType !== 'none' && <WeatherSystem type={weatherType} />}
+            <DustParticles ref={dustRef} />
 
+            {isWalkMode && <PlayerFlashlight isOn={isFlashlightOn} />}
             {!isCinematicMode && <ScreenshotButton onCapture={(url) => setScreenshots(prev => [...prev, url])} />}
             {!isCinematicMode && <VideoRecorder />}
           </Suspense>
