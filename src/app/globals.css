@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0f0f0f;
+  --color-surface: #1a1a2e;
+  --color-primary: #00d4ff;
+  --color-secondary: #f8fafc;
+  --color-glass: rgba(255, 255, 255, 0.05);
+
+  --font-sans: var(--font-inter), sans-serif;
+
+  --backdrop-blur-xs: 2px;
+}
+
+:root {
+  --foreground-rgb: 248, 250, 252;
+  --background-rgb: 15, 15, 15;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: rgb(var(--background-rgb));
+  overflow-x: hidden;
+}
+
+@utility glass-panel {
+  @apply backdrop-blur-md border border-white/10 shadow-xl;
+  background-color: var(--color-glass);
+}
+
+@utility text-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400;
+}
